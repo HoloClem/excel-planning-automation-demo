@@ -29,7 +29,7 @@
 ![Overall Pipeline](assets/01_overall_pipeline.png)
 
 ### Allocation V4 Routing 决策逻辑
-![V4 Routing](assets/02_allocation_v4_routing.png)
+![V4 Routing](assets/02_allocation_routing.png)
 
 ### pcode 层滚动库存覆盖
 ![Inventory Roll](assets/03_inventory_roll_logic.png)
