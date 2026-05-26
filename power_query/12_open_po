@@ -1,0 +1,86 @@
+// ============================================================
+// SDA Framework | 12_open_po
+// Open PO 在途供给查询 + 早期 PO 动态聚合
+//
+// 核心逻辑:
+//   1. 内嵌 SQL 从 SSD_Scode_Output_Full 提取 Open PO:
+//      - 每个 PO 只取最新快照 (MAX Filename_date)
+//      - 筛选 TW02/CN04 工厂的 LA 记录
+//      - Open PO Qty = Quantity(PO) - SUM(Quantity Reduced(MRP))
+//      - 按 scode + Site + week 聚合
+//   2. Pivot Site → PTI / Pega 两列
+//   3. 早期 PO 聚合（关键设计）:
+//      - 动态取 10_prf_long 的 MIN(week) 作为 MinPRFWeek
+//      - week < MinPRFWeek 的行自动归入 MinPRFWeek
+//      - 按 scode + week 重新 SUM
+//      - 每周三 PRF 更新后 MinPRFWeek 自动 +1，无需手动维护
+//
+// 数据源: SSD_Scode_Output_Full (与 FDD 共用同一张表，筛选条件不同)
+// 输出: scode + week 粒度的 PTI / Pega Open PO 数量
+// 下游: LEFT JOIN 到 09_scode_roll，参与 available = BOH + open_po
+// ============================================================
+
+let
+    Source = Sql.Database(
+        "np-sftcst-prd01.corp.nandps.com",
+        "SSD_Scode_Output",
+        [Query="
+            WITH LatestSnapshot AS (
+                SELECT 
+                    [Purchasing Document Number],
+                    MAX([Filename_date]) AS max_snapshot_date
+                FROM [dbo].[SSD_Scode_Output_Full]
+                GROUP BY [Purchasing Document Number]
+            ),
+            OpenPO_PerDoc AS (
+                SELECT
+                    t.[Material Number]     AS scode,
+                    t.[Site],
+                    YEAR(t.[Item delivery date (PO)]) * 100 
+                        + DATEPART(ISO_WEEK, t.[Item delivery date (PO)]) AS week,
+                    MAX(t.[Quantity (PO)])  AS po_qty,
+                    SUM(t.[Quantity Reduced (MRP)]) AS shipped_qty
+                FROM [dbo].[SSD_Scode_Output_Full] t
+                INNER JOIN LatestSnapshot s
+                    ON  t.[Purchasing Document Number] = s.[Purchasing Document Number]
+                    AND t.[Filename_date] = s.max_snapshot_date
+                WHERE t.[Plant] IN ('TW02','CN04')
+                  AND t.[Confirmation Category] = 'LA'
+                  AND t.[Item delivery date (PO)] >= '2026-01-01'
+                GROUP BY 
+                    t.[Purchasing Document Number],
+                    t.[Material Number],
+                    t.[Site],
+                    YEAR(t.[Item delivery date (PO)]) * 100 
+                        + DATEPART(ISO_WEEK, t.[Item delivery date (PO)])
+                HAVING MAX(t.[Quantity (PO)]) - SUM(t.[Quantity Reduced (MRP)]) > 0
+            )
+            SELECT scode, Site, week, SUM(po_qty - shipped_qty) AS open_po_qty
+            FROM OpenPO_PerDoc
+            GROUP BY scode, Site, week
+        "]
+    ),
+
+    // pivot Site 成两列
+    #"Pivoted" = Table.Pivot(
+        Source, List.Distinct(Source[Site]),
+        "Site", "open_po_qty", List.Sum),
+
+    // null 填 0
+    #"Replaced Nulls" = Table.ReplaceValue(
+        #"Pivoted", null, 0,
+        Replacer.ReplaceValue, List.Skip(Table.ColumnNames(#"Pivoted"), 2)),
+
+    // ── 🔥 新增：早于 PRF 首周的 Open PO 全部归入首周 ──
+    // 动态取 10_prf_long 的 min week，周三 PRF 更新后自动跟着变
+    MinPRFWeek = List.Min(#"10_prf_long"[week]),
+
+    #"Capped Week" = Table.TransformColumns(#"Replaced Nulls",
+        {{"week", each if _ < MinPRFWeek then MinPRFWeek else _, Int64.Type}}),
+
+    #"Reaggregated" = Table.Group(#"Capped Week", {"scode", "week"}, {
+        {"PTI",  each List.Sum([PTI]),  type number},
+        {"Pega", each List.Sum([Pega]), type number}
+    })
+in
+    #"Reaggregated"
