@@ -1,0 +1,51 @@
+-- ============================================================
+-- SDA Framework | 04_in-week_AGI
+-- 当周 AGI（Actual Goods Issue）查询
+-- 
+-- 数据源: vFact_SapDirect_Likp (header) + vFact_SapDirect_Lips (item)
+-- 用途:   提取本周已发生的 GI，用于回推 pcode 层 Beginning BOH
+--         BOH = 当前库存 + 本周 WTD AGI
+-- 输出层: 04_in-week_AGI（供 Power Query 05_agi_pcode_wide 使用）
+-- ============================================================
+
+SET DATEFIRST 7;  -- 设定周日为一周第一天
+
+DECLARE @now DATETIME = GETDATE();
+DECLARE @week_start DATETIME = DATEADD(
+    DAY,
+    1 - DATEPART(WEEKDAY, @now),
+    CAST(CAST(@now AS DATE) AS DATETIME)
+);
+
+SELECT 
+    h.[act_gds_mvmnt_date] AS [actual_gi_date], 
+    h.[delivery] AS [dn], 
+    h.[goods_issue_time], 
+    h.[goods_movement_sts], 
+    i.[item], 
+    i.[material], -- material = pcode 
+    i.[plant], 
+    i.[storage_location], 
+    i.[batch], 
+    COALESCE(
+        NULLIF(i.[actual_delivery_qty], 0),
+        i.[delivery_quantity]
+    ) AS [actual_gi_qty], 
+    i.[base_unit_of_measure] AS [uom], 
+    i.[movement_type] 
+FROM [gops_data_staging_ent].[dbo].[vFact_SapDirect_Likp] h
+INNER JOIN [gops_data_staging_ent].[dbo].[vFact_SapDirect_Lips] i
+    ON h.[delivery] = i.[delivery]
+WHERE
+    h.[act_gds_mvmnt_date] IS NOT NULL
+    AND h.[act_gds_mvmnt_date] >= @week_start   -- 本周周日 00:00:00
+    AND h.[act_gds_mvmnt_date] <= @now          -- 当前时刻
+    AND h.[goods_movement_sts] = 'C'
+    AND i.[material] IS NOT NULL
+    AND i.[movement_type] = '601'
+    AND i.[plant] IN ('CN02', 'US07')  -- 如果没有 US07 结果，就改成 ('CN02','US01')
+    AND COALESCE(NULLIF(i.[actual_delivery_qty], 0), i.[delivery_quantity], 0) <> 0
+ORDER BY
+    h.[act_gds_mvmnt_date] DESC,
+    h.[delivery],
+    i.[item];
