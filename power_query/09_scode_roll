@@ -1,0 +1,119 @@
+// ============================================================
+// SDA Framework | 09_scode_roll
+// scode 层滚动库存覆盖（PTI / PEGA 完全隔离 + Open PO 增强）
+//
+// 核心逻辑:
+//   1. 读取 08_pcode_roll 的 net_need，按 scode + week 聚合
+//      （多个 pcode 映射到同一 scode → SUM）
+//   2. US07 额外 lead time：self-join 取下一周 US07 需求
+//      → scode week W 的 US07 需求 = pcode week W+1 的值
+//   3. 首周叠加：US07 首周 = 当周 + 下周（已在进行中，需同时备货）
+//   4. 合成 scode gross need:
+//      - PTI  = us07_net_final + cn02_us_net（TW 产线承接 US 需求）
+//      - PEGA = cn02_nonus_net（CN 产线承接 non-US 需求）
+//   5. week 整体 -1：pcode week N → scode week N-1（提前备货）
+//   6. Join scode inventory（静态快照，仅首周作为 BOH）
+//   7. Join Open PO（在途供给，按 scode + week 匹配）
+//   8. 真正的逐周滚动由 Excel 公式完成:
+//      available[w] = BOH[w] + open_po[w]
+//      end_inventory[w] = MAX(0, available[w] - demand[w])
+//      BOH[w+1] = end_inventory[w]
+//
+// 输入: tbl_08 (08_pcode_roll), 07_scode_inventory, 12_open_po
+// 输出: week + scode 粒度的 gross_need / inventory / open_po
+// ============================================================
+
+let
+    Source = Excel.CurrentWorkbook(){[Name="tbl_08"]}[Content],
+
+    // ── 1. 选列 ──
+    #"Selected" = Table.SelectColumns(Source, {
+        "week", "scode",
+        "us07_net_need", "cn02_us_net_need", "cn02_nonus_net_need"
+    }),
+
+    // ── 2. 按 scode + week 聚合（多个 pcode → 同一 scode）──
+    #"Grouped" = Table.Group(#"Selected", {"week", "scode"}, {
+        {"us07_net_sum",       each List.Sum([us07_net_need]),       type number},
+        {"cn02_us_net_sum",    each List.Sum([cn02_us_net_need]),    type number},
+        {"cn02_nonus_net_sum", each List.Sum([cn02_nonus_net_need]), type number}
+    }),
+
+    // ── 3. US07 额外 lead time：self-join 取下一周 US07 ──
+    //    US07 在美国，scode 需额外提前 1 周备货
+    //    → scode week W 的 US07 需求 = pcode week W+1 的值
+    US07_lookup = Table.SelectColumns(#"Grouped",
+        {"week", "scode", "us07_net_sum"}),
+    US07_shifted = Table.TransformColumns(US07_lookup,
+        {{"week", each _ - 1, Int64.Type}}),
+    US07_renamed = Table.RenameColumns(US07_shifted,
+        {{"us07_net_sum", "us07_next_week"}}),
+
+    Joined = Table.NestedJoin(#"Grouped", {"week", "scode"},
+        US07_renamed, {"week", "scode"}, "lt", JoinKind.LeftOuter),
+    Expanded_LT = Table.ExpandTableColumn(Joined, "lt",
+        {"us07_next_week"}),
+    Filled_LT = Table.ReplaceValue(Expanded_LT, null, 0,
+        Replacer.ReplaceValue, {"us07_next_week"}),
+
+    // ── 4. 首周叠加（US07）──
+    // ★ 修改点：改为取 Grouped 表实际最小 week，确保首周一定命中
+    MinWeek = List.Min(#"Grouped"[week]),
+    #"Added US07_final" = Table.AddColumn(Filled_LT, "us07_net_final",
+        each if [week] = MinWeek
+             then [us07_net_sum] + [us07_next_week]   // 首周：当周 + 下周
+             else [us07_next_week],                    // 后续周：仅取下一周
+        type number),
+
+    // ── 5. Scode gross need ──
+    #"Added pti" = Table.AddColumn(#"Added US07_final", "pti_gross_need_qty",
+        each [us07_net_final] + [cn02_us_net_sum], type number),
+    #"Added pega" = Table.AddColumn(#"Added pti", "pega_gross_need_qty",
+        each [cn02_nonus_net_sum], type number),
+
+    // ── 🔥 6. Pcode→Scode lead time：week 整体 -1 ──
+    //    pcode week N 的 net need → scode week N-1 的 gross need
+    //    仅 week 标签平移；后续 join 的 inventory / Open PO 按平移后的 week 取值
+    #"Shifted scode" = Table.TransformColumns(#"Added pega",
+        {{"week", each _ - 1, Int64.Type}}),
+
+    // ── 7. Join scode inventory（静态快照，仅按 scode）──
+    //    库存不随 week 变化，只在首周作为 BOH，后续由 Excel 滚动
+    #"Merged Inv" = Table.NestedJoin(#"Shifted scode", {"scode"},
+        #"07_scode_inventory", {"scode"},
+        "07_scode_inventory", JoinKind.LeftOuter),
+    #"Expanded Inv" = Table.ExpandTableColumn(#"Merged Inv",
+        "07_scode_inventory",
+        {"pega_scode_inventory_qty", "pti_scode_inventory_qty"},
+        {"pega_scode_inventory_qty", "pti_scode_inventory_qty"}),
+    #"Fill Inv" = Table.ReplaceValue(#"Expanded Inv", null, 0,
+        Replacer.ReplaceValue, {"pega_scode_inventory_qty", "pti_scode_inventory_qty"}),
+
+    #"Typed" = Table.TransformColumnTypes(#"Fill Inv",
+        {{"pti_gross_need_qty", Int64.Type}, {"pega_gross_need_qty", Int64.Type}}),
+    #"Sorted" = Table.Sort(#"Typed",
+        {{"scode", Order.Ascending}, {"week", Order.Ascending}}),
+
+    // ── 8. Join Open PO（按 scode + 已平移的 week）──
+    //    平移后 week = scode week，所以拿到的是 scode 当周的 Open PO ✓
+    #"Merged OpenPO" = Table.NestedJoin(
+        #"Sorted", {"scode", "week"},
+        #"12_open_po", {"scode", "week"},
+        "open_po", JoinKind.LeftOuter),
+    #"Expanded OpenPO" = Table.ExpandTableColumn(
+        #"Merged OpenPO", "open_po",
+        {"PTI", "Pega"},
+        {"pti_open_po", "pega_open_po"}),
+    #"Fill OpenPO" = Table.ReplaceValue(
+        #"Expanded OpenPO", null, 0,
+        Replacer.ReplaceValue, {"pti_open_po", "pega_open_po"}),
+
+    // ── 9. 输出 ──
+    #"Final" = Table.SelectColumns(#"Fill OpenPO", {
+        "week", "scode",
+        "pti_gross_need_qty", "pega_gross_need_qty",
+        "pti_scode_inventory_qty", "pega_scode_inventory_qty",
+        "pti_open_po", "pega_open_po"
+    })
+in
+    #"Final"
