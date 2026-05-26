@@ -1,0 +1,126 @@
+// ============================================================
+// SDA Framework | 08_pcode_roll
+// pcode 层滚动库存覆盖（US07 / CN02 完全隔离）
+//
+// 核心技术: List.Accumulate 实现逐周滚动扣减
+// 
+// 逻辑概要:
+//   1. Join AGI + Inventory → 计算 BOH (当前库存 + 本周 AGI)
+//   2. 按 pcode 分组，对每组按 week 排序
+//   3. List.Accumulate 逐周滚动：
+//      - US07: 简单扣减 (us07_boh → us07_eoh → carry forward)
+//      - CN02: NON_US 优先扣减 → 剩余再扣 US (两步隔离)
+//   4. 穿透净需求 (net_need) 传递到 scode 层
+//
+// 输入: 04_alloc_pcode, 05_agi_pcode_wide, 06_pcode_inventory_current_wide
+// 输出: week + pcode + scode 粒度的 BOH / EOH / net_need
+// ============================================================
+
+let
+    Source = #"04_alloc_pcode",
+
+    // ── 1. Join AGI（不变）──
+    #"Merged AGI" = Table.NestedJoin(Source, {"pcode"},
+        #"05_agi_pcode_wide", {"pcode"}, "agi", JoinKind.LeftOuter),
+    #"Expanded AGI" = Table.ExpandTableColumn(#"Merged AGI", "agi",
+        {"cn02_agi_wtd_qty", "us07_agi_wtd_qty"},
+        {"cn02_agi_wtd_qty", "us07_agi_wtd_qty"}),
+    #"Fill AGI" = Table.ReplaceValue(#"Expanded AGI", null, 0,
+        Replacer.ReplaceValue, {"cn02_agi_wtd_qty", "us07_agi_wtd_qty"}),
+
+    // ── 2. Join Inventory（不变）──
+    #"Merged Inv" = Table.NestedJoin(#"Fill AGI", {"pcode"},
+        #"06_pcode_inventory_current_wide", {"pcode"}, "inv", JoinKind.LeftOuter),
+    #"Expanded Inv" = Table.ExpandTableColumn(#"Merged Inv", "inv",
+        {"current_cn02_inventory_qty", "current_us07_inventory_qty"},
+        {"current_cn02_inventory_qty", "current_us07_inventory_qty"}),
+    #"Fill Inv" = Table.ReplaceValue(#"Expanded Inv", null, 0,
+        Replacer.ReplaceValue, {"current_cn02_inventory_qty", "current_us07_inventory_qty"}),
+
+    // ── 3. BOH = current + AGI（不变）──
+    #"Added BOH_US07" = Table.AddColumn(#"Fill Inv",
+        "init_us07_boh",
+        each [current_us07_inventory_qty] + [us07_agi_wtd_qty], type number),
+    #"Added BOH_CN02" = Table.AddColumn(#"Added BOH_US07",
+        "init_cn02_boh",
+        each [current_cn02_inventory_qty] + [cn02_agi_wtd_qty], type number),
+
+    // ── 4. Sort ──
+    #"Sorted" = Table.Sort(#"Added BOH_CN02",
+        {{"pcode", Order.Ascending}, {"week", Order.Ascending}}),
+
+    // ── 5. 按 pcode 分组 → List.Accumulate 逐周滚动 ──
+    #"Grouped" = Table.Group(#"Sorted", {"pcode"}, {
+        {"sub", each _, type table}
+    }),
+
+    #"Rolled" = Table.AddColumn(#"Grouped", "rolled", each
+        let
+            rows      = Table.ToRecords([sub]),
+            init_us07 = rows{0}[init_us07_boh],
+            init_cn02 = rows{0}[init_cn02_boh],
+            acc = List.Accumulate(
+                {0..List.Count(rows)-1},
+                [res = {}, us07_carry = init_us07, cn02_carry = init_cn02],
+                (s, i) =>
+                    let
+                        r = rows{i},
+
+                        // ── US07：简单扣减 ──
+                        u_boh = s[us07_carry],
+                        u_eoh = List.Max({0, u_boh - r[US07_plant_qty]}),
+                        u_net = List.Max({0, r[US07_plant_qty] - u_boh}),
+
+                        // ── CN02：NON_US 优先扣 ──
+                        c_boh         = s[cn02_carry],
+                        // Step 1: 先扣 NON_US
+                        c_after_nonus = List.Max({0, c_boh - r[CN02_NON_US_Alloc]}),
+                        c_nonus_net   = List.Max({0, r[CN02_NON_US_Alloc] - c_boh}),
+                        // Step 2: 剩余再扣 US
+                        c_after_us    = List.Max({0, c_after_nonus - r[CN02_US_Alloc]}),
+                        c_us_net      = List.Max({0, r[CN02_US_Alloc] - c_after_nonus}),
+                        // EOH
+                        c_eoh         = c_after_us
+                    in
+                        [
+                            res = s[res] & {[
+                                week              = r[week],
+                                scode             = r[scode],
+                                US07_plant_qty    = r[US07_plant_qty],
+                                us07_boh          = u_boh,
+                                us07_eoh          = u_eoh,
+                                us07_net_need     = u_net,
+                                CN02_NON_US_Alloc = r[CN02_NON_US_Alloc],
+                                CN02_US_Alloc     = r[CN02_US_Alloc],
+                                cn02_boh          = c_boh,
+                                cn02_eoh          = c_eoh,
+                                cn02_nonus_net_need = c_nonus_net,
+                                cn02_us_net_need    = c_us_net
+                            ]},
+                            us07_carry = u_eoh,
+                            cn02_carry = c_eoh
+                        ]
+            )
+        in
+            Table.FromRecords(acc[res])
+    ),
+
+    // ── 6. 展开滚动结果 ──
+    #"Removed sub" = Table.RemoveColumns(#"Rolled", {"sub"}),
+    #"Expanded" = Table.ExpandTableColumn(#"Removed sub", "rolled",
+        {"week", "scode",
+         "US07_plant_qty", "us07_boh", "us07_eoh", "us07_net_need",
+         "CN02_NON_US_Alloc", "CN02_US_Alloc",
+         "cn02_boh", "cn02_eoh",
+         "cn02_nonus_net_need", "cn02_us_net_need"}),
+
+    // ── 7. 选列输出 ──
+    #"Final" = Table.SelectColumns(#"Expanded", {
+        "week", "pcode", "scode",
+        "US07_plant_qty", "us07_boh", "us07_eoh", "us07_net_need",
+        "CN02_NON_US_Alloc", "CN02_US_Alloc",
+        "cn02_boh", "cn02_eoh",
+        "cn02_nonus_net_need", "cn02_us_net_need"
+    })
+in
+    #"Final"
