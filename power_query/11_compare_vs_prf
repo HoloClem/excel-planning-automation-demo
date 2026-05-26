@@ -1,0 +1,189 @@
+// ============================================================
+// SDA Framework | 11_compare_vs_prf
+// 最终对比输出层：双层 Gap 分析 + Final Gap 综合建议
+//
+// 核心逻辑:
+//   1. 读取 09_scode_roll（Excel 公式滚动后的结果）
+//   2. Unpivot pti/pega net_need → 长表（odm_desc 维度）
+//   3. FDD week -1 偏移（scode 需提前一周备货）
+//   4. 补入 FDD 独有的 week+scode+odm_desc 组合（predicted_qty=0）
+//   5. Join PRF → gap_vs_prf = prf_qty − predicted_qty
+//   6. Join FDD → open_fdd（偏移后）
+//   7. Join Open PO（按 odm_desc 拆分 PTI/Pega 再合并）
+//   8. Join BOH（取 09 的 end_inventory，week+1 偏移为下周 BOH）
+//      BOH 下限保护: MAX(boh, 0)
+//   9. gap_vs_openFDD = BOH + prf_qty + open_po − open_fdd
+//      （open_fdd=0 时输出 ""，区分"无承诺"和"数量为0"）
+//  10. final_gap 综合逻辑:
+//      - 两个 gap 都 < 0 → 取更负的（最大缺口）
+//      - 仅 FDD < 0 → 以 FDD 为准
+//      - 仅 PRF < 0 → 以 PRF 为准
+//      - 都 ≥ 0 → ""（不显示）
+//      - 无 FDD → 回退到 PRF
+//  11. 过滤 week < MinPRFWeek 的行
+//
+// Gap 方向统一: 正 = 够，负 = 不够
+//
+// 输入: _09_scode_roll, 10_prf_long, FDD_OpenQty
+// 输出: week + scode + odm_desc 粒度的完整对比结果
+// ============================================================
+
+let
+    Source = Excel.CurrentWorkbook(){[Name="_09_scode_roll"]}[Content],
+
+    #"Changed Type" = Table.TransformColumnTypes(Source,{
+        {"week", Int64.Type}, {"scode", type text},
+        {"pti_gross_need_qty", Int64.Type},       {"pega_gross_need_qty", Int64.Type},
+        {"pti_scode_inventory_qty", Int64.Type},   {"pega_scode_inventory_qty", Int64.Type},
+        {"end_pti_inventory_qty", Int64.Type},     {"end_pega_inventory_qty", Int64.Type},
+        {"pti_net_need_qty", Int64.Type},           {"pega_net_need_qty", Int64.Type},
+        {"pti_open_po", Int64.Type},                {"pega_open_po", Int64.Type}
+    }),
+
+    // ── Unpivot net_need → 长表 ──
+    #"Removed Columns" = Table.RemoveColumns(#"Changed Type",{
+        "pti_gross_need_qty", "pega_gross_need_qty",
+        "pti_scode_inventory_qty", "pega_scode_inventory_qty",
+        "end_pti_inventory_qty", "end_pega_inventory_qty",
+        "pti_open_po", "pega_open_po"}),
+    #"Nulls to Zero" = Table.ReplaceValue(#"Removed Columns", null, 0,
+        Replacer.ReplaceValue, {"pti_net_need_qty", "pega_net_need_qty"}),
+    #"Unpivoted" = Table.UnpivotOtherColumns(#"Nulls to Zero",
+        {"week","scode"}, "Attribute", "Value"),
+    #"Renamed" = Table.RenameColumns(#"Unpivoted",
+        {{"Attribute","odm_desc"},{"Value","predicted_qty"}}),
+    #"Tag PTI" = Table.ReplaceValue(#"Renamed",
+        "pti_net_need_qty","PTI Taiwan NPSG",Replacer.ReplaceText,{"odm_desc"}),
+    #"Tag Pega" = Table.ReplaceValue(#"Tag PTI",
+        "pega_net_need_qty","Pegatron NPSG",Replacer.ReplaceText,{"odm_desc"}),
+
+    // ── FDD 提前一周 ──
+    FDD_Shifted = Table.TransformColumns(FDD_OpenQty,
+        {{"week", each _ - 1, Int64.Type}}),
+
+    #"FDD Keys" = Table.AddColumn(
+        Table.Distinct(Table.SelectColumns(FDD_Shifted,{"week","scode","odm_desc"})),
+        "predicted_qty", each 0, Int64.Type),
+    #"Combined Base" = Table.Combine({#"Tag Pega", #"FDD Keys"}),
+    #"Base Final" = Table.Group(#"Combined Base",
+        {"week","scode","odm_desc"},
+        {{"predicted_qty", each List.Max([predicted_qty]), Int64.Type}}),
+
+    // ── Join PRF ──
+    #"Merged PRF" = Table.NestedJoin(#"Base Final",
+        {"week","scode","odm_desc"},
+        #"10_prf_long",{"week","scode","odm_desc"},
+        "prf", JoinKind.LeftOuter),
+    #"Expanded PRF" = Table.ExpandTableColumn(#"Merged PRF",
+        "prf",{"prf_qty"},{"prf_qty"}),
+    #"Fill PRF" = Table.ReplaceValue(#"Expanded PRF",null,0,
+        Replacer.ReplaceValue,{"prf_qty"}),
+    #"Added gap_vs_prf" = Table.AddColumn(#"Fill PRF","gap_vs_prf",
+        each [prf_qty] - [predicted_qty]),
+
+    // ── Join FDD（偏移后）──
+    #"Merged FDD" = Table.NestedJoin(#"Added gap_vs_prf",
+        {"week","scode","odm_desc"},
+        FDD_Shifted,{"week","scode","odm_desc"},
+        "fdd", JoinKind.LeftOuter),
+    #"Expanded FDD" = Table.ExpandTableColumn(#"Merged FDD",
+        "fdd",{"FDD_OpenQty"},{"open_fdd"}),
+    #"Fill FDD" = Table.ReplaceValue(#"Expanded FDD",null,0,
+        Replacer.ReplaceValue,{"open_fdd"}),
+
+    // ── Open PO 查找表 ──
+    PTI_po = Table.AddColumn(
+        Table.RenameColumns(
+            Table.SelectColumns(#"Changed Type",{"week","scode","pti_open_po"}),
+            {{"pti_open_po","open_po"}}),
+        "odm_desc", each "PTI Taiwan NPSG", type text),
+    Pega_po = Table.AddColumn(
+        Table.RenameColumns(
+            Table.SelectColumns(#"Changed Type",{"week","scode","pega_open_po"}),
+            {{"pega_open_po","open_po"}}),
+        "odm_desc", each "Pegatron NPSG", type text),
+    PO_Lookup = Table.Combine({PTI_po, Pega_po}),
+
+    #"Merged PO" = Table.NestedJoin(#"Fill FDD",
+        {"week","scode","odm_desc"},
+        PO_Lookup,{"week","scode","odm_desc"},
+        "po", JoinKind.LeftOuter),
+    #"Expanded PO" = Table.ExpandTableColumn(#"Merged PO",
+        "po",{"open_po"},{"open_po"}),
+    #"Fill PO" = Table.ReplaceValue(#"Expanded PO",null,0,
+        Replacer.ReplaceValue,{"open_po"}),
+
+// ══════════════════════════════════════════
+    // 🔥 BOH 查找表（取 09 的 end_inventory，week+1 偏移为下周 BOH）
+    // ══════════════════════════════════════════
+    PTI_boh = Table.AddColumn(
+        Table.RenameColumns(
+            Table.TransformColumns(
+                Table.SelectColumns(#"Changed Type",
+                    {"week","scode","end_pti_inventory_qty"}),
+                {{"week", each _ + 1, Int64.Type}}),       // ← week+1：本周 EOH = 下周 BOH
+            {{"end_pti_inventory_qty","boh"}}),
+        "odm_desc", each "PTI Taiwan NPSG", type text),
+
+    Pega_boh = Table.AddColumn(
+        Table.RenameColumns(
+            Table.TransformColumns(
+                Table.SelectColumns(#"Changed Type",
+                    {"week","scode","end_pega_inventory_qty"}),
+                {{"week", each _ + 1, Int64.Type}}),       // ← week+1
+            {{"end_pega_inventory_qty","boh"}}),
+        "odm_desc", each "Pegatron NPSG", type text),
+
+    BOH_Lookup = Table.Combine({PTI_boh, Pega_boh}),
+
+    #"Merged BOH" = Table.NestedJoin(#"Fill PO",
+        {"week","scode","odm_desc"},
+        BOH_Lookup,{"week","scode","odm_desc"},
+        "boh_tbl", JoinKind.LeftOuter),
+    #"Expanded BOH" = Table.ExpandTableColumn(#"Merged BOH",
+        "boh_tbl",{"boh"},{"boh"}),
+    #"Fill BOH" = Table.ReplaceValue(#"Expanded BOH",null,0,
+        Replacer.ReplaceValue,{"boh"}),
+
+    // ★ BOH 不能小于零
+    #"Floor BOH" = Table.TransformColumns(#"Fill BOH",
+         {{"boh", each List.Max({_, 0}), type number}}),
+
+    // ══════════════════════════════════════════
+    // 🔥 静态 gap：BOH + PRF + Open PO − FDD
+    // ══════════════════════════════════════════
+    #"Added gap_vs_openFDD" = Table.AddColumn(#"Floor BOH", "gap_vs_openFDD",
+        each if [open_fdd] = 0 then ""
+             else [boh] + [prf_qty] + [open_po] - [open_fdd]),
+    #"Added Final Gap" = Table.AddColumn(#"Added gap_vs_openFDD", "final_gap",
+        each
+            let
+                prf = [gap_vs_prf],
+                fdd = [gap_vs_openFDD],
+                has_fdd = fdd <> ""
+            in
+                if not has_fdd then
+                    (if prf < 0 then prf else "")
+                else if prf < 0 and fdd < 0 then
+                    List.Min({prf, fdd})        // 都负：取绝对值更大的（更负的）
+                else if fdd < 0 then
+                    fdd                          // 仅 FDD 负：以 FDD 为准
+                else if prf < 0 then
+                    prf                          // 仅 PRF 负：以 PRF 为准
+                else
+                    ""                           // 都正：不显示
+    ),
+    // ── 输出 ──
+    #"Final" = Table.SelectColumns(#"Added Final Gap",{
+        "week","scode","odm_desc",
+        "predicted_qty","prf_qty","gap_vs_prf",
+        "boh","open_po","open_fdd","gap_vs_openFDD",
+        "final_gap"
+    }),
+
+    MinPRFWeek = List.Min(#"10_prf_long"[week]),
+    #"Filtered" = Table.SelectRows(#"Final",
+        each [week] >= MinPRFWeek),
+    #"Sorted Rows" = Table.Sort(Filtered,{{"odm_desc", Order.Ascending}, {"week", Order.Ascending}})
+in
+    #"Sorted Rows"
