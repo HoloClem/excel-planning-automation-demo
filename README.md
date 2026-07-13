@@ -2,7 +2,7 @@
 
 > **Supply-Demand Alignment & Gap Analysis Framework (SDA Framework)**
 
-> 🌐 **Language:** English | [中文](README.zh-CN.md)
+> 🌐 **Language:** English | [中文](README_CN.md)
 
 A portfolio project built on **Excel / Power Query / SQL / Python**, demonstrating how rule-driven supply-planning logic can be turned into a maintainable, reusable, and auditable automated data pipeline.
 
