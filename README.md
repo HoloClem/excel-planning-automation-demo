@@ -1,67 +1,91 @@
 # 📦 Supply Planning Automation Demo
 
-> **Supply‑Demand Alignment & Gap Analysis Framework (SDA Framework)**
+> **Supply-Demand Alignment & Gap Analysis Framework (SDA Framework)**
 
-一个基于 **Excel / Power Query / SQL / Python** 的作品集项目，展示如何将规则驱动的供应规划逻辑，整理成可维护、可复用、可审计的自动化数据流程。
+> 🌐 **Language:** English | [中文](README.zh-CN.md)
+
+A portfolio project built on **Excel / Power Query / SQL / Python**, demonstrating how rule-driven supply-planning logic can be turned into a maintainable, reusable, and auditable automated data pipeline.
 
 > [!NOTE]
-> **关于本仓库的说明（Honest Disclaimer）**
-> 本仓库为个人**作品集演示**，用于展示方法论、数据架构与代码工程能力。
-> - ✅ **不包含任何真实业务数据行**、示例数据集、生产环境配置或业务文件
-> - ✅ 展示的是**逻辑结构与实现思路**，而非可运行的真实数据管道
-> - ⚠️ 为保证代码真实性，SQL / Power Query 中保留了**真实的表名与模块命名**；脱离内网无法访问，也不含任何数据内容
+> **Honest Disclaimer**
+> This repository is a personal **portfolio demo** intended to showcase methodology, data architecture, and data-engineering capability.
+> - ✅ Contains **no real business data rows**, sample datasets, production configuration, or business files
+> - ✅ Demonstrates **logic and implementation approach**, not a runnable production pipeline
+> - ⚠️ For code authenticity, the SQL / Power Query retain **real table and module names**; these are inaccessible outside the corporate network and carry no data content
 
 ---
 
-## ★ v4 更新（相较 v3 的主要变化）
+## ★ v4 Updates (changes vs v3)
 
-| 变更点 | 说明 |
-|--------|------|
-| 🔄 **scode 库存独立取数** | `07_scode_inventory` 改为独立 SQL：合并 `Mchb`（普通成品仓）+ `Mslb`（特殊/寄售库存）UNION ALL，不再依赖 `inventory_raw`；PQ 从 8 步简化为 1 步 |
-| 🔄 **AGI 合并取数** | 新增 `05_agi_pcode_level` 独立 SQL，合并原 `04 in-week_AGI` 的取数与透视 |
-| 🔄 **pcode 库存独立取数** | `06_pcode_inventory` 独立 SQL，同时按 Plant 与 COO 透视（合并原 `06_pcode_inventory_current_wide`） |
-| ➕ **累计口径 Gap** | 新增 `cumulative_gap_vs_prf`（按 scode + odm_desc 逐周 running sum） |
-| ➕ **新增字段** | 新增 `ssd_family_name`、`scode_alloc_qty`（US07 week‑3 / CN02 week‑2 偏移） |
-| 🔧 **FDD supply 口径** | `gap_vs_openFDD` 的 supply 改为：**首周 = open_po + prf**，**其他周 = prf**（不再全程叠加 Open PO） |
-| 🔧 **final_gap 口径** | `final_gap = MIN(cumulative_gap_vs_prf, gap_vs_openFDD)`，取更保守（更负）的缺口 |
-| 🔧 **BOH 来源重构** | FDD 视角 BOH：首周取 `07_scode_inventory` 实时 snapshot，其余周在 11 内部滚动，允许负值传递累积 FDD 欠账 |
-| 📊 **Gap Dashboard** | 新建 Gap Dashboard 透视表，面向业务快速查看缺口 |
-
----
-
-## 📌 项目简介
-
-本项目模拟一个典型的 **供应规划场景**：将 Allocation、Inventory、AGI、PRF、FDD、Open PO 等多张输入表整合到统一模型中，通过规则计算生成最终输出。
-
-**核心目标：**
-- 估算未来各周的 **production need**（净需求）
-- 将模型推导结果分别与 **PRF**（工厂排产计划）和 **FDD**（ODM 供给承诺）进行双层对比
-- 输出可操作的 **gap 分析** 与 **final_gap 建议值**
-
-**最终输出粒度：** `week + scode + odm_desc`
+| Change | Description |
+|--------|-------------|
+| 🔄 **scode inventory independent query** | `07_scode_inventory` now runs a dedicated SQL that UNIONs `Mchb` (standard finished-goods stock) + `Mslb` (special / consignment stock); no longer depends on `inventory_raw`. PQ simplified from 8 steps to 1 |
+| 🔄 **Consolidated AGI query** | New `05_agi_pcode_level` dedicated SQL merges the former `04 in-week_AGI` extraction and pivot |
+| 🔄 **pcode inventory independent query** | `06_pcode_inventory` dedicated SQL, pivoting by both Plant and COO (merges former `06_pcode_inventory_current_wide`) |
+| ➕ **Cumulative gap metric** | Added `cumulative_gap_vs_prf` (running sum per scode + odm_desc) |
+| ➕ **New fields** | Added `ssd_family_name` and `scode_alloc_qty` (US07 week-3 / CN02 week-2 offsets) |
+| 🔧 **FDD supply definition** | `gap_vs_openFDD` supply is now: **first week = open_po + prf**, **other weeks = prf** (Open PO no longer stacked across all weeks) |
+| 🔧 **final_gap definition** | `final_gap = MIN(cumulative_gap_vs_prf, gap_vs_openFDD)`, the more conservative (more negative) gap |
+| 🔧 **BOH source refactor** | FDD-view BOH: first week from `07_scode_inventory` real-time snapshot; remaining weeks rolled internally in 11, allowing negative carry-over to accumulate FDD backlog |
+| 📊 **Gap Dashboard** | New Gap Dashboard pivot table for quick business review of gaps |
 
 ---
 
-## 🔁 核心流程（Pipeline）
+## 📌 Project Overview
 
-### 端到端总流程
-![Overall Pipeline](assets/01_overall_pipeline.png)
+This project models a typical **supply-planning scenario**: it integrates multiple input tables (Allocation, Inventory, AGI, PRF, FDD, Open PO) into a unified model and applies rule-based calculations to produce the final output.
 
-### Allocation V4 Routing 决策逻辑
-![V4 Routing](assets/02_allocation_v4_routing.png)
+**Core goals:**
+- Estimate weekly future **production need** (net demand)
+- Compare the model's projections against **PRF** (factory production plan) and **FDD** (ODM supply commitment) in two independent layers
+- Produce actionable **gap analysis** and a **final_gap** recommendation
 
-### pcode 层滚动库存覆盖
-![Inventory Roll](assets/03_inventory_roll_logic.png)
+**Output grain:** `week + scode + odm_desc`
+
+---
+
+## 🔁 Core Pipeline
+
+The framework is documented at two levels of detail: an **L1** top-level overview and a fully decomposed **L2** flow with six sub-processes.
+
+### L1 — Top-level overview
+![L1 Overview](assets/L1_overview.png)
+
+### L2 — End-to-end pipeline
+![L2 Overall Pipeline](assets/L2.0_overall_pipeline.png)
+
+<details>
+<summary><b>L2 sub-processes (click to expand)</b></summary>
+
+#### L2.1 — Allocation COO split (V4 routing)
+![L2.1 Allocation COO split](assets/L2.1_allocation_coo_split.png)
+
+#### L2.2 — P-code starting inventory & rolling
+![L2.2 P-code rolling](assets/L2.2_pcode_inventory_rolling.png)
+
+#### L2.3 — S-code starting inventory & rolling
+![L2.3 S-code rolling](assets/L2.3_scode_inventory_rolling.png)
+
+#### L2.4 — Gap vs PRF
+![L2.4 Gap vs PRF](assets/L2.4_gap_vs_prf.png)
+
+#### L2.5 — Gap vs Open FDD
+![L2.5 Gap vs Open FDD](assets/L2.5_gap_vs_openfdd.png)
+
+#### L2.6 — Final Gap
+![L2.6 Final Gap](assets/L2.6_final_gap.png)
+
+</details>
 
 ```mermaid
 graph LR
-    A[Allocation] --> B[US / non-US 拆分]
-    B --> C[V4 Routing<br/>US07 优先, CN02 承接溢出]
-    C --> D[Lead Time 偏移<br/>通用2周; US07 +1; FDD -1]
-    D --> E[AGI → BOH 回推]
-    E --> F[pcode 层覆盖<br/>完全隔离]
-    F --> G[pcode→scode 映射<br/>week -2]
-    G --> H[scode 层覆盖<br/>完全隔离 + Open PO]
+    A[Allocation] --> B[US / non-US split]
+    B --> C[V4 Routing<br/>US07 priority, CN02 absorbs overflow]
+    C --> D[Lead-time offset<br/>general 2w; US07 +1; FDD -1]
+    D --> E[AGI to BOH rollback]
+    E --> F[pcode coverage<br/>fully isolated]
+    F --> G[pcode to scode mapping<br/>week -2]
+    G --> H[scode coverage<br/>fully isolated + Open PO]
     H --> I[11_final_compare]
     J[PRF] --> I
     K[FDD_OpenQty] --> I
@@ -71,107 +95,107 @@ graph LR
     I --> O[final_gap]
 ```
 
-> **主线：** Allocation → US/non-US 拆分 → V4 routing → Lead time 偏移 → AGI rollback → pcode 覆盖 → scode 覆盖 → PRF compare → FDD compare
+> **Main line:** Allocation → US/non-US split → V4 routing → lead-time offset → AGI rollback → pcode coverage → scode coverage → PRF compare → FDD compare
 
 ---
 
-## 🏗️ 数据架构
+## 🏗️ Data Architecture
 
-### 输入层
+### Input Layer
 
-| 表名 | 说明 |
-|------|------|
-| `00_control` | 参数控制表 |
-| `01_alloc_raw` | Allocation 原始数据（gross demand 起点） |
-| `02_us_rate_final` | US rate 最终版本 |
-| `MM_US_Rate` | 物料主数据（含 PTI_CONSOLIDATED 标记） |
-| `PRF` | 工厂计划 benchmark |
-| `FDD_OpenQty` | FDD 供给承诺数据 |
+| Table | Description |
+|-------|-------------|
+| `00_control` | Parameter control table |
+| `01_alloc_raw` | Raw allocation data (gross-demand starting point) |
+| `02_us_rate_final` | Final US-rate version |
+| `MM_US_Rate` | Material master (includes PTI_CONSOLIDATED flag) |
+| `PRF` | Factory-plan benchmark |
+| `FDD_OpenQty` | FDD supply-commitment data |
 
-### 计算层
+### Computation Layer
 
-| 表名 | 说明 |
-|------|------|
-| `03_alloc_pcode_level` | 按 us_rate 拆分 US/non-US，再经 V4 routing 分配 |
-| `04_alloc_pcode` | pcode 层聚合；同时作为 scode allocation 来源（US07 week-3、CN02 week-2 偏移） |
-| `05_agi_pcode_level` | ★ 独立 SQL，合并原 AGI 取数与透视，输出 us07/cn02_agi_wtd_qty |
-| `06_pcode_inventory` | ★ 独立 SQL，按 Plant + COO 透视 |
-| `07_scode_inventory` | ★ 独立 SQL，Mchb + Mslb 合并，透视为 pega/pti_scode_inventory_qty |
-| `08_pcode_roll` | pcode 层滚动库存覆盖（完全隔离） |
-| `09_scode_roll` | scode 层滚动库存覆盖（完全隔离，含 Open PO） |
-| `10_prf_long` | PRF 长表 |
-| `12_open_po` | Open PO 按 scode + site + week 汇总，pass-due 归入首周 |
+| Table | Description |
+|-------|-------------|
+| `03_alloc_pcode_level` | Splits US/non-US by us_rate, then allocates via V4 routing |
+| `04_alloc_pcode` | pcode-level aggregation; also feeds scode allocation (US07 week-3, CN02 week-2 offsets) |
+| `05_agi_pcode_level` | ★ Dedicated SQL merging former AGI extraction and pivot; outputs us07/cn02_agi_wtd_qty |
+| `06_pcode_inventory` | ★ Dedicated SQL, pivoting by Plant + COO |
+| `07_scode_inventory` | ★ Dedicated SQL, UNIONs Mchb + Mslb, pivoted to pega/pti_scode_inventory_qty |
+| `08_pcode_roll` | pcode-level rolling inventory coverage (fully isolated) |
+| `09_scode_roll` | scode-level rolling inventory coverage (fully isolated, incl. Open PO) |
+| `10_prf_long` | PRF long table |
+| `12_open_po` | Open PO aggregated by scode + site + week; pass-due rolled into first week |
 
-### 输出层
+### Output Layer
 
-| 表名 | 说明 |
-|------|------|
-| `11_final_compare` | 最终对比输出（含 gap_vs_prf、cumulative_gap_vs_prf、gap_vs_openFDD、final_gap） |
-| **Gap Dashboard** | ★ 面向业务的透视表 |
+| Table | Description |
+|-------|-------------|
+| `11_final_compare` | Final comparison output (gap_vs_prf, cumulative_gap_vs_prf, gap_vs_openFDD, final_gap) |
+| **Gap Dashboard** | ★ Business-facing pivot table |
 
 ---
 
-## 🔑 核心模块详解
+## 🔑 Core Modules
 
 ### 1️⃣ Allocation V4 Routing
 
-| 步骤 | 操作 |
-|------|------|
-| Step 1 | `pcode + demand_group` 粒度：`us_qty = alloc × us_rate`，`non_us_qty = alloc × (1−us_rate)` |
-| Step 2 | `week + scode` 聚合：`AMR_Need = Σus_qty`，`NON_AMR_Need = Σnon_us_qty` |
-| Step 3 | US07 优先覆盖：`AMR_Need ≤ US07_Alloc → CN02_US_Alloc=0`；否则 `= AMR_Need − US07_Alloc` |
-| Step 4 | 非 US 需求全归 CN02：`CN02_NON_US_Alloc = NON_AMR_Need` |
+| Step | Operation |
+|------|-----------|
+| Step 1 | At `pcode + demand_group` grain: `us_qty = alloc × us_rate`, `non_us_qty = alloc × (1−us_rate)` |
+| Step 2 | Aggregate at `week + scode`: `AMR_Need = Σus_qty`, `NON_AMR_Need = Σnon_us_qty` |
+| Step 3 | US07 covers US demand first: `AMR_Need ≤ US07_Alloc → CN02_US_Alloc=0`; otherwise `= AMR_Need − US07_Alloc` |
+| Step 4 | All non-US demand goes to CN02: `CN02_NON_US_Alloc = NON_AMR_Need` |
 
-**输出：** `US07_Alloc`、`CN02_US_Alloc`、`CN02_NON_US_Alloc`
+**Outputs:** `US07_Alloc`, `CN02_US_Alloc`, `CN02_NON_US_Alloc`
 
-> **PTI_CONSOLIDATED override：** 白名单（PTI_CONSOLIDATED / FIPS / AMR，及历史 US 出货占比 >90% 的 pcode/customer）在 US_Rate 表中 us_rate 直接固定为 100%，全局 split 时自动 `us_alloc = total_alloc`，无需单独分支。
+> **PTI_CONSOLIDATED override:** For whitelisted items (PTI_CONSOLIDATED / FIPS / AMR, and any pcode/customer with historical US shipment share > 90%), us_rate is hard-fixed to 100% in the US_Rate table. The global split then automatically yields `us_alloc = total_alloc`, so no separate override branch is needed.
 
-### 2️⃣ Lead Time 偏移
+### 2️⃣ Lead-Time Offset
 
-| Plant | 通用偏移 | 额外偏移 | 总计 |
-|-------|:-------:|:-------:|:----:|
-| CN02 | 2 周 | — | **2 周** |
-| US07 | 2 周 | +1 周 | **3 周** |
+| Plant | General offset | Extra offset | Total |
+|-------|:-------------:|:------------:|:-----:|
+| CN02 | 2 weeks | — | **2 weeks** |
+| US07 | 2 weeks | +1 week | **3 weeks** |
 
-- `09` steps 3-4：US07 self-join 取 week+1（额外 +1）
-- `09` step 6：所有 scode gross need week **-2**（通用 pcode→scode）
-- `11`：FDD week **-1**（独立比较偏移）
-- 首周特殊：`US07_Net_Alloc = week N + week N+1`
-- Plant 合并：NL02 → CN02
+- `09` steps 3-4: US07 self-join takes week+1 (the extra +1)
+- `09` step 6: all scode gross need shifted week **-2** (general pcode→scode)
+- `11`: FDD shifted week **-1** (independent comparison offset)
+- First-week special case: `US07_Net_Alloc = week N + week N+1`
+- Plant merge: NL02 → CN02
 
-### 3️⃣ AGI → BOH 回推
+### 3️⃣ AGI → BOH Rollback
 ```
-本周开始时初始库存 = 当前时点库存 + 本周 WTD AGI
+beginning-of-week inventory = current inventory + this-week WTD AGI
 ```
-AGI **不**扣减 demand，仅用于回推 Beginning BOH。数据由 `05_agi_pcode_level` 独立 SQL 提供。
+AGI does **not** deduct demand; it is used only to roll current inventory back to the Beginning BOH. Data is supplied by the `05_agi_pcode_level` dedicated SQL.
 
-### 4️⃣ pcode 层库存覆盖（完全隔离）
+### 4️⃣ pcode-Level Inventory Coverage (fully isolated)
 
-| Demand 来源 | 可消耗库存 | 跨 plant |
-|-------------|-----------|:--------:|
-| US07 demand（US only） | 只吃 US07（TW pool） | ❌ |
-| CN02 demand（US + non-US） | 只吃 CN02（CN pool） | ❌ |
+| Demand source | Consumable inventory | Cross-plant |
+|---------------|---------------------|:-----------:|
+| US07 demand (US only) | US07 only (TW pool) | ❌ |
+| CN02 demand (US + non-US) | CN02 only (CN pool) | ❌ |
 
-- **US07（单步）：** `end = MAX(0, 可用 − US07_Alloc)`；`net_need = MAX(0, US07_Alloc − 可用)`
-- **CN02（两步，Non-US 优先）：**
-  - Step 1（先扣 Non-US）：`after_nonus = MAX(0, 可用 − CN02_NON_US_Alloc)`
-  - Step 2（剩余扣 US 溢出）：`end = MAX(0, after_nonus − CN02_US_Alloc)`
+- **US07 (single step):** `end = MAX(0, available − US07_Alloc)`; `net_need = MAX(0, US07_Alloc − available)`
+- **CN02 (two steps, non-US first):**
+  - Step 1 (deduct non-US first): `after_nonus = MAX(0, available − CN02_NON_US_Alloc)`
+  - Step 2 (deduct US overflow from remainder): `end = MAX(0, after_nonus − CN02_US_Alloc)`
 
-> ⚠️ 完全隔离，禁止任何跨 plant 补位（旧版单向补位规则已废弃）。
+> ⚠️ Fully isolated — no cross-plant borrowing (the old one-way top-up rule is deprecated).
 
-### 5️⃣ pcode → scode 映射（week -2）
+### 5️⃣ pcode → scode Mapping (week -2)
 
-| pcode 层输出 | → scode 层 | odm_desc |
-|-------------|-----------|----------|
+| pcode-level output | → scode level | odm_desc |
+|--------------------|--------------|----------|
 | US07_net_need + CN02_US_net_need | `pti_gross_need_qty` | PTI Taiwan NPSG |
 | CN02_NON_US_net_need | `pega_gross_need_qty` | Pegatron NPSG |
 
-### 6️⃣ scode 层库存覆盖（完全隔离 + Open PO）
+### 6️⃣ scode-Level Inventory Coverage (fully isolated + Open PO)
 
-| 工厂 | ODM | 库存来源 |
-|------|-----|---------|
-| TW02 | PTI | 独立 SQL（Mchb + Mslb 合并） |
-| CN04 | PEGA | 独立 SQL（Mchb + Mslb 合并） |
+| Plant | ODM | Inventory source |
+|-------|-----|------------------|
+| TW02 | PTI | Dedicated SQL (Mchb + Mslb union) |
+| CN04 | PEGA | Dedicated SQL (Mchb + Mslb union) |
 
 ```
 available[w]     = BOH[w] + open_po[w]
@@ -179,125 +203,146 @@ end_inventory[w] = MAX(0, available[w] - demand[w])
 BOH[w+1]         = end_inventory[w]
 ```
 
-> **Open PO 定义：** `Open PO Qty = scheduled_quantity − quantity_delivered`（>0 即在途）
-> 数据源：`vFact_SapDirect_Eket + Ekpo + Ekko`，筛选 ZNB / FG01 / deletion ≠ L；仅 TW02/CN04。
-> Pass-due（week < MinPRFWeek）自动聚合到 MinPRFWeek（动态取自 `10_prf_long`）。
+> **Open PO definition:** `Open PO Qty = scheduled_quantity − quantity_delivered` (> 0 means in-transit)
+> Source: `vFact_SapDirect_Eket + Ekpo + Ekko`, filtered on ZNB / FG01 / deletion ≠ L; TW02/CN04 only.
+> Pass-due rows (week < MinPRFWeek) are auto-aggregated into MinPRFWeek (dynamically taken from `10_prf_long`).
 
-### 7️⃣ 双层 Gap 对比
+### 7️⃣ Dual Gap Comparison
 
-| 层级 | 公式 |
-|------|------|
-| PRF（逐周） | `gap_vs_prf = prf_qty − predicted_qty` |
-| PRF（累计）★ | `cumulative_gap_vs_prf`（按 scode+odm_desc running sum） |
+| Layer | Formula |
+|-------|---------|
+| PRF (per week) | `gap_vs_prf = prf_qty − predicted_qty` |
+| PRF (cumulative) ★ | `cumulative_gap_vs_prf` (running sum per scode+odm_desc) |
 | FDD | `gap_vs_openFDD = BOH + supply − open_fdd` |
 
-**FDD supply 分周取值（v4）：**
+**FDD supply, by week (v4):**
 
-| 周次 | supply |
+| Week | supply |
 |------|--------|
-| 首周（week = MinPRFWeek） | `open_po + prf_qty` |
-| 其他周 | `prf_qty` |
+| First week (week = MinPRFWeek) | `open_po + prf_qty` |
+| Other weeks | `prf_qty` |
 
-> **FDD 视角 BOH 滚动：** 首周取 `07_scode_inventory` 实时 snapshot；其余周 `next_week_BOH = 本周 gap_vs_openFDD`，**允许负值传递**以累积 FDD 欠账（不做 MAX(0) 下限）。
-> `open_fdd = 0` 时**不归零**，由上周 BOH 继续滚动（该值为信息性滚动余额）。
+> **FDD-view BOH rolling:** first week uses the `07_scode_inventory` real-time snapshot; for later weeks, `next_week_BOH = this week's gap_vs_openFDD`, **allowing negative carry-over** to accumulate FDD backlog (no MAX(0) floor).
+> When `open_fdd = 0`, the value is **not** zeroed — BOH keeps rolling from the previous week (this figure is an informational running balance).
 
 ### 8️⃣ Final Gap
 
 ```
 final_gap = MIN(cumulative_gap_vs_prf, gap_vs_openFDD)
 ```
-取两个 gap 中更小（更负）的值，作为最保守的缺口建议。方向统一：正 = 够，负 = 不够。
+Takes the smaller (more negative) of the two gaps as the most conservative shortfall recommendation. Sign convention is unified: positive = sufficient, negative = short.
 
 ---
 
-## 📊 最终输出字段（11_final_compare）
+## 📊 Final Output Fields (11_final_compare)
 
-| 列名 | 含义 | 来源 |
-|------|------|------|
-| `predicted_qty` | 模型推算净需求 | 首列汇总 pass-due net_need + 当周；其他周为单周 |
-| `prf_qty` | 工厂排产计划 | PRF 表 |
-| `gap_vs_prf` | 逐周缺口 | `prf_qty − predicted_qty` |
-| `cumulative_gap_vs_prf` | ★ 累计缺口 | 按 scode+odm_desc running sum |
-| `ssd_family_name` | ★ SSD 产品族名 | 10_prf_long merge（无匹配为 null） |
-| `scode_alloc_qty` | ★ scode 原始 allocation（扣减前） | 04_alloc_pcode，US07 -3 / CN02 -2 偏移，pass-due 归入 MinPRFWeek |
-| `boh` | scode 期初库存 | 首周取 07 snapshot，其余周内部滚动 |
-| `open_po` | 在途采购订单 | 12_open_po |
-| `open_fdd` | FDD 承诺出货量（week -1） | FDD_OpenQty（偏移后） |
-| `gap_vs_openFDD` | 总供给 vs FDD | `BOH + supply − open_fdd` |
-| `final_gap` | 最终缺口建议 | `MIN(cumulative_gap_vs_prf, gap_vs_openFDD)` |
+| Column | Meaning | Source |
+|--------|---------|--------|
+| `predicted_qty` | Model-projected net need | First column sums pass-due net_need + current week; other weeks are single-week |
+| `prf_qty` | Factory production plan | PRF table |
+| `gap_vs_prf` | Per-week gap | `prf_qty − predicted_qty` |
+| `cumulative_gap_vs_prf` | ★ Cumulative gap | Running sum per scode+odm_desc |
+| `ssd_family_name` | ★ SSD product-family name | Merged from 10_prf_long (null if no match) |
+| `scode_alloc_qty` | ★ scode raw allocation (pre-deduction) | 04_alloc_pcode, US07 -3 / CN02 -2 offsets, pass-due rolled into MinPRFWeek |
+| `boh` | scode beginning inventory | First week from 07 snapshot; other weeks rolled internally |
+| `open_po` | In-transit purchase orders | 12_open_po |
+| `open_fdd` | FDD committed shipment (week -1) | FDD_OpenQty (after offset) |
+| `gap_vs_openFDD` | Total supply vs FDD | `BOH + supply − open_fdd` |
+| `final_gap` | Final shortfall recommendation | `MIN(cumulative_gap_vs_prf, gap_vs_openFDD)` |
 
-**输出粒度：** `week + scode + odm_desc`
-
----
-
-## 🛠️ 技术栈
-
-| 技术 | 用途 |
-|------|------|
-| **Excel + Power Query (M)** | 主计算引擎；`List.Accumulate` 实现滚动库存覆盖 |
-| **SQL Server** | Allocation / Inventory (Mchb+Mslb) / AGI / Open PO (Eket+Ekpo+Ekko) / FDD 取数 |
-| **Python** | 辅助数据预处理与验证 |
+**Output grain:** `week + scode + odm_desc`
 
 ---
 
-## 📂 仓库结构
+## 🛠️ Tech Stack
+
+| Technology | Use |
+|------------|-----|
+| **Excel + Power Query (M)** | Main compute engine; `List.Accumulate` for rolling inventory coverage |
+| **SQL Server** | Extraction of Allocation / Inventory (Mchb+Mslb) / AGI / Open PO (Eket+Ekpo+Ekko) / FDD |
+| **Python** | Auxiliary data preprocessing and validation |
+
+---
+
+## 📂 Repository Structure
 
 ```
 excel-planning-automation-demo/
-├── README.md
+├── README.md                       # Project overview (English, default)
+├── README.zh-CN.md                 # Project overview (Chinese)
 ├── docs/
-│   └── SDA_Framework_项目阶段总结.md
+│   └── SDA_Framework_project_summary.md    # Full business-logic document (v4)
 ├── assets/
-│   ├── 01_overall_pipeline.png
-│   ├── 02_allocation_v4_routing.png
-│   └── 03_inventory_roll_logic.png
+│   ├── L1_overview.png                     # L1 top-level overview
+│   ├── L2.0_overall_pipeline.png           # L2 end-to-end pipeline
+│   ├── L2.1_allocation_coo_split.png       # L2.1 COO split (V4 routing)
+│   ├── L2.2_pcode_inventory_rolling.png    # L2.2 P-code rolling
+│   ├── L2.3_scode_inventory_rolling.png    # L2.3 S-code rolling
+│   ├── L2.4_gap_vs_prf.png                 # L2.4 Gap vs PRF
+│   ├── L2.5_gap_vs_openfdd.png             # L2.5 Gap vs Open FDD
+│   └── L2.6_final_gap.png                  # L2.6 Final Gap
 ├── sql/
-│   ├── inventory_raw.sql
-│   ├── allocation_raw.sql
-│   ├── agi_inweek.sql
-│   └── fdd_open_po_source.sql
+│   ├── allocation_raw.sql                  # Allocation + scode->pcode mapping
+│   ├── agi_inweek.sql                      # In-week AGI (for BOH rollback)
+│   ├── inventory_raw.sql                   # Unified inventory query (pcode + scode)
+│   └── fdd_open_po_source.sql              # PO Confirmation latest-snapshot source
 └── power_query/
-    ├── 08_pcode_roll.pq        # ⭐ pcode 滚动覆盖 (List.Accumulate)
-    ├── 09_scode_roll.pq        # ⭐ scode 滚动覆盖 + Open PO
-    ├── 11_compare_vs_prf.pq    # ⭐ 双层 Gap + Final Gap
-    └── 12_open_po.pq           # ⭐ Open PO 动态聚合
+    ├── 08_pcode_roll.pq                    # ⭐ pcode rolling coverage (List.Accumulate)
+    ├── 09_scode_roll.pq                    # ⭐ scode rolling coverage + Open PO
+    ├── 11_compare_vs_prf.pq                # ⭐ Dual gap + Final Gap (v4)
+    └── 12_open_po.pq                       # ⭐ Open PO dynamic aggregation (Eket+Ekpo+Ekko)
 ```
 
----
+### File Listing
 
-## 📋 版本历史
+| Path | Type | Description |
+|------|------|-------------|
+| `sql/allocation_raw.sql` | SQL | Raw allocation (gross demand) + BOM-based scode→pcode mapping |
+| `sql/agi_inweek.sql` | SQL | In-week Actual Goods Issue, used to roll back Beginning BOH |
+| `sql/inventory_raw.sql` | SQL | Unified inventory extraction (pcode & scode branches) |
+| `sql/fdd_open_po_source.sql` | SQL | Latest PO Confirmation snapshot (shared FDD reference) |
+| `power_query/08_pcode_roll.pq` | Power Query (M) | pcode-level rolling coverage via `List.Accumulate` (US07/CN02 isolated) |
+| `power_query/09_scode_roll.pq` | Power Query (M) | scode-level rolling coverage + Open PO join (PTI/PEGA isolated) |
+| `power_query/11_compare_vs_prf.pq` | Power Query (M) | Final output: dual-gap, cumulative gap, FDD-view rolling, final_gap |
+| `power_query/12_open_po.pq` | Power Query (M) | Open PO in-transit supply (Eket+Ekpo+Ekko), pass-due aggregation |
 
-| 版本 | 时间 | 主要变更 |
-|------|------|---------|
-| **v4** | 2026-05 | ★ scode 库存独立 SQL（Mchb+Mslb）；AGI 合并入 05；06 独立 SQL 按 Plant+COO<br>★ 新增 cumulative_gap_vs_prf / ssd_family_name / scode_alloc_qty<br>★ FDD supply 改为首周 open_po+prf、其他周 prf<br>★ final_gap = MIN(cumulative_gap_vs_prf, gap_vs_openFDD)<br>★ BOH 取 07 snapshot + FDD 视角负值滚动；新增 Gap Dashboard |
-| **v3** | 2026-05 | Open PO 在途供给模块；FDD 独立评估；final_gap 综合列；BOH week+1 偏移 |
-| **v2** | 2026-04 | V4 routing；AGI 改为 BOH 回推；pcode / scode 完全隔离 |
-| **v1** | 2026-03 | 初始框架，基本 Allocation → Inventory → PRF 对比链路 |
-
----
-
-## ⚠️ 已知边界与关键假设
-
-| 项目 | 说明 |
-|------|------|
-| AGI 定位 | 仅作周初 BOH 回推依据，不再作为 demand 扣减项 |
-| 完全隔离 | pcode 层 US07/CN02、scode 层 PTI/PEGA 均完全隔离，禁止跨 plant 补位 |
-| Lead time | pcode→scode 通用 2 周 + US07 额外 1 周；FDD 独立 -1 周；如变化需同步改这两处 |
-| PTI 路由 | PTI_CONSOLIDATED = 100% 的 scode 全部路由到 PTI |
-| FDD 维度 | FDD 仅在 pcode 层评估；BOH 允许负值向下传递累积欠账（不做 MAX(0)） |
-| Open PO 范围 | 基于 Item delivery date 分周，实际到货可能偏移；仅覆盖 TW02/CN04 的 LA |
-| scode 库存 | 合并 Mchb + Mslb 的 unrestricted 总量；若寄售库存有使用限制，可能略高估可用量 |
-| 刷新性能 | 完整刷新较慢，主要瓶颈是数据库服务器位于美国的网络延迟；中间 query 已设为 Connection Only |
+> Note: The v4 scode-inventory (Mchb+Mslb) and consolidated AGI/pcode-inventory queries are embedded directly in Power Query for demo simplicity; only the standalone SQL modules are exported here.
 
 ---
 
-## 🚀 后续可优化方向
+## 📋 Version History
 
-- [ ] 区分 **Committed / Open FDD**（AB > 0 vs AB = 0）
-- [ ] **Effective Supply** 指标：`min(prf_qty, FDD_OpenQty)`
-- [ ] **Bottleneck Flag**：标记瓶颈在 PRF 侧还是 FDD 侧
-- [ ] Open PO 交期偏差追踪与置信区间
-- [ ] 寄售库存使用限制的区分处理
+| Version | Date | Key changes |
+|---------|------|-------------|
+| **v4** | 2026-05 | ★ scode inventory dedicated SQL (Mchb+Mslb); AGI merged into 05; 06 dedicated SQL by Plant+COO<br>★ Added cumulative_gap_vs_prf / ssd_family_name / scode_alloc_qty<br>★ FDD supply changed to first-week open_po+prf, other weeks prf<br>★ final_gap = MIN(cumulative_gap_vs_prf, gap_vs_openFDD)<br>★ BOH from 07 snapshot + FDD-view negative rolling; new Gap Dashboard |
+| **v3** | 2026-05 | Open PO in-transit module; independent FDD evaluation; final_gap column; BOH week+1 offset |
+| **v2** | 2026-04 | V4 routing; AGI switched to BOH rollback; pcode / scode full isolation |
+| **v1** | 2026-03 | Initial framework; basic Allocation → Inventory → PRF comparison chain |
+
+---
+
+## ⚠️ Known Boundaries & Assumptions
+
+| Item | Description |
+|------|-------------|
+| AGI role | Used only for beginning-of-week BOH rollback, no longer as a demand deduction |
+| Full isolation | pcode US07/CN02 and scode PTI/PEGA are fully isolated; no cross-plant borrowing |
+| Lead time | pcode→scode general 2 weeks + US07 extra 1 week; FDD independent -1 week; update both spots if lead time changes |
+| PTI routing | scodes with PTI_CONSOLIDATED = 100% route entirely to PTI |
+| FDD dimension | FDD is evaluated at the pcode layer only; BOH may carry negative values downstream to accumulate backlog (no MAX(0)) |
+| Open PO scope | Bucketed by item delivery date, so actual arrival may drift; covers TW02/CN04 LA records only |
+| scode inventory | Merges Mchb + Mslb unrestricted totals; if consignment stock has usage restrictions, available may be slightly overstated |
+| Refresh performance | Full refresh is slow, mainly due to network latency to the US-hosted database; intermediate queries are set to Connection Only |
+
+---
+
+## 🚀 Future Directions
+
+- [ ] Distinguish **Committed vs Open FDD** (AB > 0 vs AB = 0)
+- [ ] **Effective Supply** metric: `min(prf_qty, FDD_OpenQty)`
+- [ ] **Bottleneck flag**: mark whether the constraint is on the PRF or FDD side
+- [ ] Open PO delivery-drift tracking with confidence intervals
+- [ ] Differentiated handling of consignment-stock usage restrictions
 
 ---
 
