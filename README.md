@@ -33,31 +33,41 @@ This project models a typical **supply-planning scenario**: it integrates multip
 The framework is documented at two levels of detail: an **L1** top-level overview and a fully decomposed **L2** flow with six sub-processes.
 
 ### L1 — Top-level overview
-![L1 Overview](assets/L1.png)
+
+assets/L1_overview.png
 
 ### L2 — End-to-end pipeline
-![L2 Overall Pipeline](assets/L2.1.png)
+
+assets/L2.0_overall_pipeline.png
 
 <details>
 <summary><b>L2 sub-processes (click to expand)</b></summary>
 
+<br>
+
 #### L2.1 — Allocation COO split (V4 routing)
-![L2.1 Allocation COO split](assets/L2.1_allocation_coo_split.png)
 
-#### L2.2 — P-code starting inventory & rolling
-![L2.2 P-code rolling](assets/L2.2_pcode_inventory_rolling.png)
+assets/L2.1_allocation_coo_split.png
 
-#### L2.3 — S-code starting inventory & rolling
-![L2.3 S-code rolling](assets/L2.3_scode_inventory_rolling.png)
+#### L2.2 — P-code starting inventory and rolling
+
+assets/L2.2_pcode_inventory_rolling.png
+
+#### L2.3 — S-code starting inventory and rolling
+
+assets/L2.3_scode_inventory_rolling.png
 
 #### L2.4 — Gap vs PRF
-![L2.4 Gap vs PRF](assets/L2.4_gap_vs_prf.png)
+
+assets/L2.4_gap_vs_prf.png
 
 #### L2.5 — Gap vs Open FDD
-![L2.5 Gap vs Open FDD](assets/L2.5_gap_vs_openfdd.png)
+
+assets/L2.5_gap_vs_openfdd.png
 
 #### L2.6 — Final Gap
-![L2.6 Final Gap](assets/L2.6_final_gap.png)
+
+assets/L2.6_final_gap.png
 
 </details>
 
