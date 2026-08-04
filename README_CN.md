@@ -13,24 +13,6 @@
 > - ✅ 展示的是**逻辑结构与实现思路**，而非可运行的真实数据管道
 > - ⚠️ 为保证代码真实性，SQL / Power Query 中保留了**真实的表名与模块命名**；脱离内网无法访问，也不含任何数据内容
 
----
-
-## ★ v4 更新（相较 v3 的主要变化）
-
-| 变更点 | 说明 |
-|--------|------|
-| 🔄 **scode 库存独立取数** | `07_scode_inventory` 改为独立 SQL：合并 `Mchb`（普通成品仓）+ `Mslb`（特殊/寄售库存）UNION ALL，不再依赖 `inventory_raw`；PQ 从 8 步简化为 1 步 |
-| 🔄 **AGI 合并取数** | 新增 `05_agi_pcode_level` 独立 SQL，合并原 `04 in-week_AGI` 的取数与透视 |
-| 🔄 **pcode 库存独立取数** | `06_pcode_inventory` 独立 SQL，同时按 Plant 与 COO 透视（合并原 `06_pcode_inventory_current_wide`） |
-| ➕ **累计口径 Gap** | 新增 `cumulative_gap_vs_prf`（按 scode + odm_desc 逐周 running sum） |
-| ➕ **新增字段** | 新增 `ssd_family_name`、`scode_alloc_qty`（US07 week‑3 / CN02 week‑2 偏移） |
-| 🔧 **FDD supply 口径** | `gap_vs_openFDD` 的 supply 改为：**首周 = open_po + prf**，**其他周 = prf**（不再全程叠加 Open PO） |
-| 🔧 **final_gap 口径** | `final_gap = MIN(cumulative_gap_vs_prf, gap_vs_openFDD)`，取更保守（更负）的缺口 |
-| 🔧 **BOH 来源重构** | FDD 视角 BOH：首周取 `07_scode_inventory` 实时 snapshot，其余周在 11 内部滚动，允许负值传递累积 FDD 欠账 |
-| 📊 **Gap Dashboard** | 新建 Gap Dashboard 透视表，面向业务快速查看缺口 |
-
----
-
 ## 📌 项目简介
 
 本项目模拟一个典型的 **供应规划场景**：将 Allocation、Inventory、AGI、PRF、FDD、Open PO 等多张输入表整合到统一模型中，通过规则计算生成最终输出。
