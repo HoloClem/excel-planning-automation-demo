@@ -13,23 +13,7 @@ A portfolio project built on **Excel / Power Query / SQL / Python**, demonstrati
 > - ✅ Demonstrates **logic and implementation approach**, not a runnable production pipeline
 > - ⚠️ For code authenticity, the SQL / Power Query retain **real table and module names**; these are inaccessible outside the corporate network and carry no data content
 
----
 
-## ★ v4 Updates (changes vs v3)
-
-| Change | Description |
-|--------|-------------|
-| 🔄 **scode inventory independent query** | `07_scode_inventory` now runs a dedicated SQL that UNIONs `Mchb` (standard finished-goods stock) + `Mslb` (special / consignment stock); no longer depends on `inventory_raw`. PQ simplified from 8 steps to 1 |
-| 🔄 **Consolidated AGI query** | New `05_agi_pcode_level` dedicated SQL merges the former `04 in-week_AGI` extraction and pivot |
-| 🔄 **pcode inventory independent query** | `06_pcode_inventory` dedicated SQL, pivoting by both Plant and COO (merges former `06_pcode_inventory_current_wide`) |
-| ➕ **Cumulative gap metric** | Added `cumulative_gap_vs_prf` (running sum per scode + odm_desc) |
-| ➕ **New fields** | Added `ssd_family_name` and `scode_alloc_qty` (US07 week-3 / CN02 week-2 offsets) |
-| 🔧 **FDD supply definition** | `gap_vs_openFDD` supply is now: **first week = open_po + prf**, **other weeks = prf** (Open PO no longer stacked across all weeks) |
-| 🔧 **final_gap definition** | `final_gap = MIN(cumulative_gap_vs_prf, gap_vs_openFDD)`, the more conservative (more negative) gap |
-| 🔧 **BOH source refactor** | FDD-view BOH: first week from `07_scode_inventory` real-time snapshot; remaining weeks rolled internally in 11, allowing negative carry-over to accumulate FDD backlog |
-| 📊 **Gap Dashboard** | New Gap Dashboard pivot table for quick business review of gaps |
-
----
 
 ## 📌 Project Overview
 
@@ -49,10 +33,10 @@ This project models a typical **supply-planning scenario**: it integrates multip
 The framework is documented at two levels of detail: an **L1** top-level overview and a fully decomposed **L2** flow with six sub-processes.
 
 ### L1 — Top-level overview
-![L1 Overview](assets/L1_overview.png)
+![L1 Overview](assets/L1.png)
 
 ### L2 — End-to-end pipeline
-![L2 Overall Pipeline](assets/L2.0_overall_pipeline.png)
+![L2 Overall Pipeline](assets/L2.1.png)
 
 <details>
 <summary><b>L2 sub-processes (click to expand)</b></summary>
